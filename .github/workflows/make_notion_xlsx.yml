@@ -1,0 +1,45 @@
+﻿name: Make Notion XLSX Upload
+
+on:
+  repository_dispatch:
+    types: [make_notion_weekly_report]
+  workflow_dispatch:
+    inputs:
+      csv_text:
+        description: CSV content
+        required: true
+        type: string
+      notion_page_id:
+        description: Notion page ID
+        required: true
+        type: string
+      report_name:
+        description: XLSX filename
+        required: false
+        default: weekly_report.xlsx
+        type: string
+      file_property_name:
+        description: Notion file property name
+        required: false
+        default: 파일과 미디어
+        type: string
+
+jobs:
+  build-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run converter and upload to Notion
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python scripts/generate_and_upload_xlsx.py
