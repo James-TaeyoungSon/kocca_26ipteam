@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import csv
 import io
 import json
@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 import requests
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Border, Font, Side
 
 NOTION_VERSION = "2025-09-03"
 
@@ -34,7 +34,7 @@ def unescape_csv_text(text: str) -> str:
     )
 
 
-def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",") -> bytes:
+def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: str = "") -> bytes:
     reader = csv.reader(io.StringIO(csv_text), delimiter=delimiter)
     rows = list(reader)
     if not rows:
@@ -44,19 +44,55 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",") -> bytes:
     ws = wb.active
     ws.title = "Report"
 
-    for row in rows:
-        ws.append(row)
+    num_cols = len(rows[0])
+    data_start_row = 1
 
-    for cell in ws[1]:
+    # ── 1. Title row ──────────────────────────────────────────────
+    if report_title:
+        title_cell = ws.cell(row=1, column=1, value=report_title)
+        if num_cols > 1:
+            ws.merge_cells(
+                start_row=1, start_column=1,
+                end_row=1,   end_column=num_cols,
+            )
+        title_cell.font = Font(bold=True, size=14)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 32
+        data_start_row = 2
+
+    # ── 2. Write CSV rows (header + data) ────────────────────────
+    for row_idx, row in enumerate(rows):
+        for col_idx, value in enumerate(row):
+            ws.cell(row=data_start_row + row_idx, column=col_idx + 1, value=value)
+
+    # ── 3. Style header row (bold, center) ───────────────────────
+    header_row_idx = data_start_row
+    for cell in ws[header_row_idx]:
         cell.font = Font(bold=True)
-        cell.alignment = Alignment(vertical="center")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[header_row_idx].height = 20
 
+    # ── 4. Borders on all data cells ─────────────────────────────
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for row in ws.iter_rows(
+        min_row=data_start_row,
+        max_row=data_start_row + len(rows) - 1,
+        min_col=1,
+        max_col=num_cols,
+    ):
+        for cell in row:
+            cell.border = border
+
+    # ── 5. Auto-fit column widths ─────────────────────────────────
     for col in ws.columns:
         max_len = 0
         for cell in col:
-            v = "" if cell.value is None else str(cell.value)
-            if len(v) > max_len:
-                max_len = len(v)
+            if cell.value is not None:
+                v = str(cell.value)
+                if len(v) > max_len:
+                    max_len = len(v)
         ws.column_dimensions[col[0].column_letter].width = min(max(10, max_len + 2), 80)
 
     bio = io.BytesIO()
@@ -140,6 +176,7 @@ def main() -> int:
     filename = payload.get("report_name", "weekly_report.xlsx")
     file_property_name = payload.get("file_property_name", "파일과 미디어")
     delimiter = payload.get("delimiter", ",")
+    report_title = payload.get("report_title", "")
 
     if not csv_text and not csv_b64:
         raise RuntimeError("payload.csv_text or payload.csv_b64 is required.")
@@ -154,7 +191,7 @@ def main() -> int:
     if delimiter == "tab":
         delimiter = "\t"
 
-    xlsx_bytes = build_xlsx_from_csv_text(csv_text, delimiter=delimiter)
+    xlsx_bytes = build_xlsx_from_csv_text(csv_text, delimiter=delimiter, report_title=report_title)
     file_upload_id = upload_xlsx_to_notion(notion_token, xlsx_bytes, filename)
     attach_file_to_page(notion_token, page_id, file_upload_id, filename, file_property_name)
 
