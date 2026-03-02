@@ -34,8 +34,8 @@ def unescape_csv_text(text: str) -> str:
     )
 
 
-def build_xlsx_from_csv_text(csv_text: str) -> bytes:
-    reader = csv.reader(io.StringIO(csv_text))
+def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",") -> bytes:
+    reader = csv.reader(io.StringIO(csv_text), delimiter=delimiter)
     rows = list(reader)
     if not rows:
         raise RuntimeError("CSV text is empty.")
@@ -142,6 +142,7 @@ def main() -> int:
     page_id = payload.get("notion_page_id", "")
     filename = payload.get("report_name", "weekly_report.xlsx")
     file_property_name = payload.get("file_property_name", "파일과 미디어")
+    delimiter = payload.get("delimiter", ",")
 
     if not csv_text:
         raise RuntimeError("payload.csv_text is required.")
@@ -150,7 +151,9 @@ def main() -> int:
 
     csv_text = unescape_csv_text(csv_text)
 
-    xlsx_bytes = build_xlsx_from_csv_text(csv_text)
+    if delimiter == "tab":
+        delimiter = "\t"
+    xlsx_bytes = build_xlsx_from_csv_text(csv_text, delimiter=delimiter)
     file_upload_id = upload_xlsx_to_notion(notion_token, xlsx_bytes, filename)
     attach_file_to_page(notion_token, page_id, file_upload_id, filename, file_property_name)
 
