@@ -22,6 +22,18 @@ def load_event_payload(event_path: str) -> Dict[str, Any]:
     return payload
 
 
+def unescape_csv_text(text: str) -> str:
+    """Convert escaped JSON-string style CSV text back to raw CSV text."""
+    # Reverse the escaping done in Make before dispatching JSON.
+    return (
+        text.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n")
+        .replace('\\"', '"')
+        .replace("\\\\", "\\")
+    )
+
+
 def build_xlsx_from_csv_text(csv_text: str) -> bytes:
     reader = csv.reader(io.StringIO(csv_text))
     rows = list(reader)
@@ -135,6 +147,8 @@ def main() -> int:
         raise RuntimeError("payload.csv_text is required.")
     if not page_id:
         raise RuntimeError("payload.notion_page_id is required.")
+
+    csv_text = unescape_csv_text(csv_text)
 
     xlsx_bytes = build_xlsx_from_csv_text(csv_text)
     file_upload_id = upload_xlsx_to_notion(notion_token, xlsx_bytes, filename)
