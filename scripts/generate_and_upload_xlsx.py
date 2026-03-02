@@ -1,9 +1,10 @@
-﻿import csv
+﻿import base64
+import csv
 import io
 import json
 import os
 import sys
-from typing import Dict, Any
+from typing import Any, Dict
 
 import requests
 from openpyxl import Workbook
@@ -24,12 +25,11 @@ def load_event_payload(event_path: str) -> Dict[str, Any]:
 
 def unescape_csv_text(text: str) -> str:
     """Convert escaped JSON-string style CSV text back to raw CSV text."""
-    # Reverse the escaping done in Make before dispatching JSON.
     return (
         text.replace("\\r\\n", "\n")
         .replace("\\n", "\n")
         .replace("\\r", "\n")
-        .replace('\\"', '"')
+        .replace('\\\"', '"')
         .replace("\\\\", "\\")
     )
 
@@ -44,15 +44,13 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",") -> bytes:
     ws = wb.active
     ws.title = "Report"
 
-    for r in rows:
-        ws.append(r)
+    for row in rows:
+        ws.append(row)
 
-    # Header style
     for cell in ws[1]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(vertical="center")
 
-    # Simple column width sizing
     for col in ws.columns:
         max_len = 0
         for cell in col:
@@ -77,7 +75,6 @@ def notion_headers(token: str, with_json: bool = False) -> Dict[str, str]:
 
 
 def upload_xlsx_to_notion(token: str, file_bytes: bytes, filename: str) -> str:
-    # 1) create file upload slot
     create_resp = requests.post(
         "https://api.notion.com/v1/file_uploads",
         headers=notion_headers(token, with_json=True),
@@ -93,7 +90,6 @@ def upload_xlsx_to_notion(token: str, file_bytes: bytes, filename: str) -> str:
     file_upload_id = create_obj["id"]
     upload_url = create_obj["upload_url"]
 
-    # 2) send file bytes
     send_resp = requests.post(
         upload_url,
         headers=notion_headers(token),
@@ -139,20 +135,25 @@ def main() -> int:
 
     payload = load_event_payload(event_path)
     csv_text = payload.get("csv_text", "")
+    csv_b64 = payload.get("csv_b64", "")
     page_id = payload.get("notion_page_id", "")
     filename = payload.get("report_name", "weekly_report.xlsx")
     file_property_name = payload.get("file_property_name", "파일과 미디어")
     delimiter = payload.get("delimiter", ",")
 
-    if not csv_text:
-        raise RuntimeError("payload.csv_text is required.")
+    if not csv_text and not csv_b64:
+        raise RuntimeError("payload.csv_text or payload.csv_b64 is required.")
     if not page_id:
         raise RuntimeError("payload.notion_page_id is required.")
 
-    csv_text = unescape_csv_text(csv_text)
+    if csv_b64:
+        csv_text = base64.b64decode(csv_b64).decode("utf-8", errors="replace")
+    else:
+        csv_text = unescape_csv_text(csv_text)
 
     if delimiter == "tab":
         delimiter = "\t"
+
     xlsx_bytes = build_xlsx_from_csv_text(csv_text, delimiter=delimiter)
     file_upload_id = upload_xlsx_to_notion(notion_token, xlsx_bytes, filename)
     attach_file_to_page(notion_token, page_id, file_upload_id, filename, file_property_name)
