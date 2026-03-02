@@ -40,6 +40,13 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
     if not rows:
         raise RuntimeError("CSV text is empty.")
 
+    # "A_구분", "B_일정" 등 순서 고정용 접두사(X_) 제거
+    if rows:
+        rows[0] = [
+            col[2:] if len(col) > 2 and col[1] == "_" and col[0].isalpha() else col
+            for col in rows[0]
+        ]
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Report"
