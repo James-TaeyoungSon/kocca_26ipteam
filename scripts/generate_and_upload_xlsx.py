@@ -86,14 +86,21 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
             cell.border = border
 
     # ── 5. Auto-fit column widths ─────────────────────────────────
-    for col in ws.columns:
+    # MergedCell에는 column_letter가 없으므로 컬럼 인덱스로 직접 순회
+    from openpyxl.utils import get_column_letter
+    for col_idx in range(1, num_cols + 1):
+        col_letter = get_column_letter(col_idx)
         max_len = 0
-        for cell in col:
-            if cell.value is not None:
-                v = str(cell.value)
-                if len(v) > max_len:
-                    max_len = len(v)
-        ws.column_dimensions[col[0].column_letter].width = min(max(10, max_len + 2), 80)
+        for row_cells in ws.iter_rows(min_col=col_idx, max_col=col_idx):
+            for cell in row_cells:
+                if cell.value is not None:
+                    try:
+                        v = str(cell.value)
+                        if len(v) > max_len:
+                            max_len = len(v)
+                    except Exception:
+                        pass
+        ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 80)
 
     bio = io.BytesIO()
     wb.save(bio)
