@@ -232,8 +232,8 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
             # 비고: 최대 40자
             ws.column_dimensions[col_letter].width = min(max(8, max_len + 2), 40)
         elif col_idx == gubun_excel_col:
-            # 구분: 내용에 맞게 좁게 (최소 4, 최대 12)
-            ws.column_dimensions[col_letter].width = min(max(4, max_len + 1), 12)
+            # 구분: 내용에 맞게 자동 (최소 4, 최대 20)
+            ws.column_dimensions[col_letter].width = min(max(4, max_len + 1), 20)
         else:
             ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 80)
 
