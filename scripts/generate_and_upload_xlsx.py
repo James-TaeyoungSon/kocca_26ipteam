@@ -161,12 +161,14 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
         for col_idx, value in enumerate(row):
             ws.cell(row=data_start_row + row_idx, column=col_idx + 1, value=value)
 
-    # ── 3. Style header row (bold, size 14, center) ───────────────
+    # ── 3. Style header row (bold, size 14, center, light gray bg) ──
     header_row_idx = data_start_row
+    gray_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
     for cell in ws[header_row_idx]:
         cell.font = Font(bold=True, size=14)
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = border
+        cell.fill = gray_fill
     ws.row_dimensions[header_row_idx].height = 24
 
     # ── 4. Style data rows + borders ─────────────────────────────
