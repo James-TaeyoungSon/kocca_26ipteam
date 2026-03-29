@@ -41,37 +41,30 @@ def unescape_csv_text(text: str) -> str:
 def fix_allday_schedule(value: str) -> str:
     """
     Make.com 날짜 형식에서 종일(all-day) 일정을 감지하여 처리.
-    - 종일 감지: 시작/종료 시간이 모두 '오전 12시'(자정 = 00:00)
+    - 실제 포맷: YYYY.MM.DD(요일) HH:MM ~ YYYY.MM.DD(요일) HH:MM  (24시간)
+    - 종일 감지: 시작/종료 시간이 모두 00:00
     - Google Calendar 종일 일정은 종료일이 실제 종료일 +1일(exclusive)이므로 -1일 조정
-    - 시간 정보(오전 12시) 제거하여 날짜만 표시
-
-    입력 형식 (다른 날):
-      YYYY.MM.DD(요일) 오전/오후 h시 ~ MM.DD(요일) 오전/오후 h시
-    입력 형식 (같은 날):
-      YYYY.MM.DD(요일) 오전/오후 h시 ~ 오전/오후 h시
+    - 시간 정보(00:00) 제거하여 날짜만 표시
     """
     if not isinstance(value, str):
         return value
 
-    # ── 패턴1: 날짜 범위형 (다른 날) ──────────────────────────────
+    # ── YYYY.MM.DD(요일) HH:MM ~ YYYY.MM.DD(요일) HH:MM ──────────
     m = re.match(
-        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(오전|오후)\s*(\d+)시'
-        r'\s*~\s*(\d{2})\.(\d{2})\([^)]+\)\s*(오전|오후)\s*(\d+)시',
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})'
+        r'\s*~\s*(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})',
         value.strip()
     )
     if m:
         s_year, s_month, s_day = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        s_ampm, s_hour = m.group(4), int(m.group(5))
-        e_month, e_day = int(m.group(6)), int(m.group(7))
-        e_ampm, e_hour = m.group(8), int(m.group(9))
+        s_hh, s_mm = int(m.group(4)), int(m.group(5))
+        e_year, e_month, e_day = int(m.group(6)), int(m.group(7)), int(m.group(8))
+        e_hh, e_mm = int(m.group(9)), int(m.group(10))
 
-        # 오전 12시 = 자정(00:00) → 종일 이벤트 판단
-        is_start_midnight = (s_ampm == '오전' and s_hour == 12)
-        is_end_midnight   = (e_ampm == '오전' and e_hour == 12)
-
-        if is_start_midnight and is_end_midnight:
+        # 시작/종료 모두 00:00 → 종일 이벤트
+        if s_hh == 0 and s_mm == 0 and e_hh == 0 and e_mm == 0:
             start_dt = datetime(s_year, s_month, s_day)
-            end_dt   = datetime(s_year, e_month, e_day) - timedelta(days=1)  # 종료일 -1일 보정
+            end_dt   = datetime(e_year, e_month, e_day) - timedelta(days=1)  # 종료일 -1일 보정
 
             s_dow = DAYS_KR[start_dt.weekday()]
             if start_dt.date() == end_dt.date():
@@ -81,27 +74,8 @@ def fix_allday_schedule(value: str) -> str:
                 e_dow = DAYS_KR[end_dt.weekday()]
                 return (
                     f"{s_year}.{s_month:02d}.{s_day:02d}({s_dow})"
-                    f" ~ {end_dt.month:02d}.{end_dt.day:02d}({e_dow})"
+                    f" ~ {end_dt.year}.{end_dt.month:02d}.{end_dt.day:02d}({e_dow})"
                 )
-
-    # ── 패턴2: 같은 날 형식 ────────────────────────────────────────
-    m2 = re.match(
-        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(오전|오후)\s*(\d+)시'
-        r'\s*~\s*(오전|오후)\s*(\d+)시',
-        value.strip()
-    )
-    if m2:
-        s_ampm, s_hour = m2.group(4), int(m2.group(5))
-        e_ampm, e_hour = m2.group(6), int(m2.group(7))
-
-        is_start_midnight = (s_ampm == '오전' and s_hour == 12)
-        is_end_midnight   = (e_ampm == '오전' and e_hour == 12)
-
-        if is_start_midnight and is_end_midnight:
-            year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
-            d = datetime(year, month, day)
-            dow = DAYS_KR[d.weekday()]
-            return f"{year}.{month:02d}.{day:02d}({dow})"
 
     return value
 
