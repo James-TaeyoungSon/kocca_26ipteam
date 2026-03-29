@@ -3,14 +3,18 @@ import csv
 import io
 import json
 import os
+import re
 import sys
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 import requests
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 NOTION_VERSION = "2025-09-03"
+
+DAYS_KR = ['월', '화', '수', '목', '금', '토', '일']
 
 
 def load_event_payload(event_path: str) -> Dict[str, Any]:
@@ -32,6 +36,74 @@ def unescape_csv_text(text: str) -> str:
         .replace('\\\"', '"')
         .replace("\\\\", "\\")
     )
+
+
+def fix_allday_schedule(value: str) -> str:
+    """
+    Make.com 날짜 형식에서 종일(all-day) 일정을 감지하여 처리.
+    - 종일 감지: 시작/종료 시간이 모두 '오전 12시'(자정 = 00:00)
+    - Google Calendar 종일 일정은 종료일이 실제 종료일 +1일(exclusive)이므로 -1일 조정
+    - 시간 정보(오전 12시) 제거하여 날짜만 표시
+
+    입력 형식 (다른 날):
+      YYYY.MM.DD(요일) 오전/오후 h시 ~ MM.DD(요일) 오전/오후 h시
+    입력 형식 (같은 날):
+      YYYY.MM.DD(요일) 오전/오후 h시 ~ 오전/오후 h시
+    """
+    if not isinstance(value, str):
+        return value
+
+    # ── 패턴1: 날짜 범위형 (다른 날) ──────────────────────────────
+    m = re.match(
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(오전|오후)\s*(\d+)시'
+        r'\s*~\s*(\d{2})\.(\d{2})\([^)]+\)\s*(오전|오후)\s*(\d+)시',
+        value.strip()
+    )
+    if m:
+        s_year, s_month, s_day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        s_ampm, s_hour = m.group(4), int(m.group(5))
+        e_month, e_day = int(m.group(6)), int(m.group(7))
+        e_ampm, e_hour = m.group(8), int(m.group(9))
+
+        # 오전 12시 = 자정(00:00) → 종일 이벤트 판단
+        is_start_midnight = (s_ampm == '오전' and s_hour == 12)
+        is_end_midnight   = (e_ampm == '오전' and e_hour == 12)
+
+        if is_start_midnight and is_end_midnight:
+            start_dt = datetime(s_year, s_month, s_day)
+            end_dt   = datetime(s_year, e_month, e_day) - timedelta(days=1)  # 종료일 -1일 보정
+
+            s_dow = DAYS_KR[start_dt.weekday()]
+            if start_dt.date() == end_dt.date():
+                # 1일짜리 종일 이벤트 → 날짜 하나만 표시
+                return f"{s_year}.{s_month:02d}.{s_day:02d}({s_dow})"
+            else:
+                e_dow = DAYS_KR[end_dt.weekday()]
+                return (
+                    f"{s_year}.{s_month:02d}.{s_day:02d}({s_dow})"
+                    f" ~ {end_dt.month:02d}.{end_dt.day:02d}({e_dow})"
+                )
+
+    # ── 패턴2: 같은 날 형식 ────────────────────────────────────────
+    m2 = re.match(
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(오전|오후)\s*(\d+)시'
+        r'\s*~\s*(오전|오후)\s*(\d+)시',
+        value.strip()
+    )
+    if m2:
+        s_ampm, s_hour = m2.group(4), int(m2.group(5))
+        e_ampm, e_hour = m2.group(6), int(m2.group(7))
+
+        is_start_midnight = (s_ampm == '오전' and s_hour == 12)
+        is_end_midnight   = (e_ampm == '오전' and e_hour == 12)
+
+        if is_start_midnight and is_end_midnight:
+            year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+            d = datetime(year, month, day)
+            dow = DAYS_KR[d.weekday()]
+            return f"{year}.{month:02d}.{day:02d}({dow})"
+
+    return value
 
 
 def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: str = "") -> bytes:
@@ -69,6 +141,12 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
         r[gubun_idx] if gubun_idx < len(r) else "",
         r[iljeong_idx] if iljeong_idx < len(r) else "",
     ))
+
+    # ── 종일 일정 날짜 보정 ────────────────────────────────────────
+    for row in data_rows:
+        if iljeong_idx < len(row):
+            row[iljeong_idx] = fix_allday_schedule(row[iljeong_idx])
+
     rows = [header] + data_rows
 
     wb = Workbook()
@@ -80,19 +158,29 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
 
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+    # ── 인쇄 설정: 가로 방향 + 자동맞춤 ─────────────────────────────
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
 
     # ── 1. Title row ──────────────────────────────────────────────
-    if report_title:
-        title_cell = ws.cell(row=1, column=1, value=report_title)
-        if num_cols > 1:
-            ws.merge_cells(
-                start_row=1, start_column=1,
-                end_row=1,   end_column=num_cols,
-            )
-        title_cell.font = Font(bold=True, size=16)
-        title_cell.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[1].height = 36
-        data_start_row = 2
+    # '콘텐츠IP전략팀'을 제목 앞에 항상 추가
+    display_title = f"콘텐츠IP전략팀 {report_title}".strip() if report_title else "콘텐츠IP전략팀"
+
+    title_cell = ws.cell(row=1, column=1, value=display_title)
+    if num_cols > 1:
+        ws.merge_cells(
+            start_row=1, start_column=1,
+            end_row=1,   end_column=num_cols,
+        )
+    title_cell.font = Font(bold=True, size=16)
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 36
+    data_start_row = 2
 
     # ── 2. Write CSV rows (header + data) ────────────────────────
     for row_idx, row in enumerate(rows):
@@ -110,10 +198,20 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
     # ── 4. Style data rows + borders ─────────────────────────────
     for r_idx, row in enumerate(data_rows):
         excel_row = data_start_row + 1 + r_idx
+
+        # 비고 필드에 "본부장" 포함 여부 확인
+        bigo_value = row[bigo_idx] if bigo_idx < len(row) else ""
+        is_honbujang = "본부장" in bigo_value
+
         for c_idx in range(num_cols):
             cell = ws.cell(row=excel_row, column=c_idx + 1)
             cell.border = border
-            if c_idx == gubun_idx:
+
+            # 본부장 행: B~D열(2~4열) 노란색 배경 + 볼드
+            if is_honbujang and 2 <= c_idx + 1 <= 4:
+                cell.fill = yellow_fill
+                cell.font = Font(bold=True, size=12)
+            elif c_idx == gubun_idx:
                 cell.font = Font(bold=True, size=12)
                 cell.alignment = Alignment(horizontal="center", vertical="center")
             elif c_idx == bigo_idx:
@@ -150,14 +248,20 @@ def build_xlsx_from_csv_text(csv_text: str, delimiter: str = ",", report_title: 
             for cell in row_cells:
                 if cell.value is not None:
                     try:
-                        v = str(cell.value).split("\n")[0]  # 줄바꿈 첫 줄 기준
+                        v = str(cell.value).split("\n")[0]
                         if len(v) > max_len:
                             max_len = len(v)
                     except Exception:
                         pass
-        # 비고 컬럼은 너무 넓어지지 않도록 40자 제한
-        max_width = 40 if col_idx == bigo_idx + 1 else 80
-        ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), max_width)
+
+        if col_idx == bigo_idx + 1:
+            # 비고: 최대 40자
+            ws.column_dimensions[col_letter].width = min(max(8, max_len + 2), 40)
+        elif col_idx == gubun_excel_col:
+            # 구분: 내용에 맞게 좁게 (최소 4, 최대 12)
+            ws.column_dimensions[col_letter].width = min(max(4, max_len + 1), 12)
+        else:
+            ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 80)
 
     bio = io.BytesIO()
     wb.save(bio)
