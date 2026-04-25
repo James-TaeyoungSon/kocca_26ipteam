@@ -38,8 +38,8 @@ DAY_COLORS: List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = [
 # → 실제 렌더링: 가로 84186, 세로 59528 (장축이 가로)
 _PG_W   = 59528   # A4 단축
 _PG_H   = 84186   # A4 장축
-_MARGIN = 4251    # 15mm
-_USABLE = _PG_H - 2 * _MARGIN   # 75684 HWP 단위 ≈ 267mm (landscape 가로 사용 폭)
+_MARGIN = 2835    # 10mm
+_USABLE = _PG_H - 2 * _MARGIN   # 78516 HWP 단위 ≈ 277mm (landscape 가로 사용 폭)
 
 # ── borderFill ID 약속 ────────────────────────────────────────────────────
 _FID_NO_BORDER = 1   # 테두리 없음 (페이지 보더용)
@@ -60,6 +60,7 @@ _CP_TIME    = 11   # 9pt #646464
 _CP_CAT_DAY = [12, 13, 14, 15, 16]   # 월~금 카테고리색
 _CP_DET_HD  = 17   # 12pt bold black
 _CP_GUBUN   = 18   # 11pt bold black
+_CP_DEADLINE = 19  # 10pt #0070C0 bold (종일·기간형 마감일 표시)
 
 # ── paraPr ID 약속 ───────────────────────────────────────────────────────
 _PP_JUSTIFY = 0    # 양쪽정렬 (기본)
@@ -254,8 +255,8 @@ def _make_header_xml() -> bytes:
     parts.extend(bf_list)
     parts.append('</hh:borderFills>')
 
-    # ── charProperties (0-18) ─────────────────────────────────────────────
-    parts.append('<hh:charProperties itemCnt="19">')
+    # ── charProperties (0-19) ─────────────────────────────────────────────
+    parts.append('<hh:charProperties itemCnt="20">')
     # 0-6: 시스템 기본 charPr
     parts.append(_charpr(0, 1000, '#000000', font_ref='base'))
     parts.append(_charpr(1, 1000, '#000000', font_ref='han2'))
@@ -277,6 +278,7 @@ def _make_header_xml() -> bytes:
     parts.append(_charpr(16, 1100, '#7030A0', bold=True))
     parts.append(_charpr(17, 1200, '#000000', bold=True))
     parts.append(_charpr(18, 1100, '#000000', bold=True))
+    parts.append(_charpr(19, 1000, '#0070C0', bold=True))
     parts.append('</hh:charProperties>')
 
     # ── tabProperties ─────────────────────────────────────────────────────
@@ -563,7 +565,20 @@ def _make_section_xml(
     parts.append(_para(_CP_LABEL, '■ 주간 일정 캘린더'))
 
     # ── 캘린더 표 ────────────────────────────────────────────────────────
-    max_slots = max((len(v) for v in day_events.values()), default=1)
+    # 구분별 그룹화: 같은 날 같은 구분의 이벤트를 한 셀에 모음
+    day_grouped: Dict[date, List] = {}
+    for d in day_dates:
+        evts = day_events.get(d, [])
+        groups: dict = {}
+        order: list = []
+        for gubun, content, is_dl in evts:
+            if gubun not in groups:
+                groups[gubun] = []
+                order.append(gubun)
+            groups[gubun].append((content, is_dl))
+        day_grouped[d] = [(g, groups[g]) for g in order]
+
+    max_slots = max((len(v) for v in day_grouped.values()), default=1)
     max_slots = max(max_slots, 2)
 
     # 5등분 (나머지는 마지막 열에)
@@ -579,18 +594,21 @@ def _make_section_xml(
         hdr_row.append((_FID_GRAY, [(label, _CP_DET_HD, _PP_CENTER)]))
     cal_rows.append(hdr_row)
 
-    # 이벤트 행 (캘린더 글자색 모두 검정)
+    # 이벤트 행 (같은 구분은 한 셀에 묶어서 표시)
     for slot in range(max_slots):
         ev_row = []
         for i, d in enumerate(day_dates):
-            events = day_events.get(d, [])
+            grps = day_grouped.get(d, [])
             lines: List[Tuple[str, int, int]] = []
-            if slot < len(events):
-                gubun, content = events[slot]
+            if slot < len(grps):
+                gubun, contents = grps[slot]
                 if gubun:
-                    lines.append((f'[{gubun}]', _CP_GUBUN, _PP_JUSTIFY))   # 검정 볼드
-                if content:
-                    lines.append((content, _CP_CONTENT, _PP_JUSTIFY))
+                    lines.append((f'[{gubun}]', _CP_GUBUN, _PP_JUSTIFY))
+                for content, is_dl in contents:
+                    if content:
+                        lines.append((content, _CP_CONTENT, _PP_JUSTIFY))
+                    if is_dl:
+                        lines.append(('(마감일)', _CP_DEADLINE, _PP_JUSTIFY))
             if not lines:
                 lines = [('', _CP_CONTENT, _PP_JUSTIFY)]
             ev_row.append((_FID_DAY_L[i], lines))
@@ -966,6 +984,7 @@ def build_hwpx_bytes(csv_text: str, report_title: str = '') -> bytes:
             day_events[cal_date].append((
                 row[gi] if gi < len(row) else '',
                 row[ci] if ci < len(row) else '',
+                not parsed['has_specific_time'],  # is_deadline: 기간형(종일) 일정
             ))
 
     # ── 상세표: 특정 시간 있는 일정만, 일정 표시 형식 변환 ──────────────
