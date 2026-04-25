@@ -225,7 +225,7 @@ def _make_header_xml() -> bytes:
         f'</hh:font>'
     )
     fonts3 = (
-        f2(0, '한컴바탕', 6, 0) + f2(1, '함초롬돋움', 6, 4) + f2(2, '함초롬바탕', 6, 4)
+        f2(0, '맑은 고딕', 6, 4) + f2(1, '함초롬돋움', 6, 4) + f2(2, '함초롬바탕', 6, 4)
     )
     fonts2 = f2(0, '함초롬돋움', 6, 4) + f2(1, '함초롬바탕', 6, 4)
 
@@ -475,20 +475,35 @@ def _para(cp_id: int, text: str, pp_id: int = _PP_JUSTIFY,
         '</hp:p>'
     )
 
-def _cell(col: int, row: int, fid: int, lines: List[Tuple[str, int, int]],
+def _cell(col: int, row: int, fid: int, lines: List,
           width: int, height: int = 500, rowspan: int = 1) -> str:
     """
     표 셀 XML.
-    lines: [(text, charPrId, paraPrId), ...]
+    lines: [(text, charPrId, paraPrId)] 또는
+           [(text, charPrId, paraPrId, [(inline_text, inline_cp), ...])]
+    4번째 요소가 있으면 동일 단락 안에 추가 run으로 인라인 삽입.
     """
-    paras = ''.join(
-        f'<hp:p id="0" paraPrIDRef="{pp}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
-        f'<hp:run charPrIDRef="{cp}">'
-        f'{"<hp:t>" + _e(txt) + "</hp:t>" if txt else ""}'
-        f'</hp:run>'
-        f'</hp:p>'
-        for txt, cp, pp in lines
-    )
+    para_parts = []
+    for item in lines:
+        txt, cp, pp = item[0], item[1], item[2]
+        extra: list = item[3] if len(item) > 3 else []
+        runs = (
+            f'<hp:run charPrIDRef="{cp}">'
+            f'{"<hp:t>" + _e(txt) + "</hp:t>" if txt else ""}'
+            f'</hp:run>'
+        )
+        for t2, cp2 in extra:
+            runs += (
+                f'<hp:run charPrIDRef="{cp2}">'
+                f'{"<hp:t>" + _e(t2) + "</hp:t>" if t2 else ""}'
+                f'</hp:run>'
+            )
+        para_parts.append(
+            f'<hp:p id="0" paraPrIDRef="{pp}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+            f'{runs}'
+            f'</hp:p>'
+        )
+    paras = ''.join(para_parts)
     return (
         f'<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="{fid}">'
         f'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" '
@@ -606,8 +621,9 @@ def _make_section_xml(
                     lines.append((f'[{gubun}]', _CP_GUBUN, _PP_JUSTIFY))
                 for content, is_dl in contents:
                     if content:
-                        lines.append((content, _CP_CONTENT, _PP_JUSTIFY))
-                    if is_dl:
+                        inline = [(' (마감일)', _CP_DEADLINE)] if is_dl else []
+                        lines.append((content, _CP_CONTENT, _PP_JUSTIFY, inline))
+                    elif is_dl:
                         lines.append(('(마감일)', _CP_DEADLINE, _PP_JUSTIFY))
             if not lines:
                 lines = [('', _CP_CONTENT, _PP_JUSTIFY)]
