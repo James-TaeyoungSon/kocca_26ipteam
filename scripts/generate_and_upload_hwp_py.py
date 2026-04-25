@@ -1126,6 +1126,14 @@ def main() -> int:
     else:
         csv_text = unescape_csv_text(csv_text)
 
+    # CSV 수신 내용 로그 (GitHub Actions에서 원인 진단용)
+    lines = csv_text.splitlines()
+    print(f'[CSV] 수신 행 수: {len(lines)}행 (헤더 포함)')
+    for i, ln in enumerate(lines[:20]):
+        print(f'[CSV] {i:02d}: {ln}')
+    if len(lines) > 20:
+        print(f'[CSV] ... (이하 {len(lines) - 20}행 생략)')
+
     if delimiter == 'tab':
         delimiter = '\t'
 
