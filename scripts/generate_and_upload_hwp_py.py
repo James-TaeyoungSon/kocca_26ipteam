@@ -890,11 +890,35 @@ def upload_file_to_notion(token: str, file_bytes: bytes, filename: str) -> str:
     return obj['id'], upload_name
 
 
+def _resolve_prop_name(token: str, page_id: str, wanted: str) -> str:
+    """페이지 속성 중 wanted 이름이 없으면 'HWP'를 포함한 속성, 없으면 '파일과 미디어' 반환."""
+    r = requests.get(
+        f'https://api.notion.com/v1/pages/{page_id}',
+        headers=_notion_headers(token),
+        timeout=15,
+    )
+    if r.status_code != 200:
+        return wanted
+    props = r.json().get('properties', {})
+    if wanted in props:
+        return wanted
+    # 'HWP'가 포함된 속성 탐색 (깨진 이름 포함)
+    for k in props:
+        if 'HWP' in k or 'hwp' in k.lower():
+            print(f'[INFO] 속성명 자동 선택: {repr(k)} (wanted={repr(wanted)})')
+            return k
+    # 최종 fallback
+    fallback = '파일과 미디어'
+    print(f'[INFO] HWP 속성 없음 → {fallback} 사용')
+    return fallback
+
+
 def attach_file_to_page(token: str, page_id: str, file_upload_id: str,
                         filename: str, file_property_name: str) -> None:
+    resolved = _resolve_prop_name(token, page_id, file_property_name)
     body = {
         'properties': {
-            file_property_name: {
+            resolved: {
                 'files': [{
                     'type': 'file_upload',
                     'file_upload': {'id': file_upload_id},
