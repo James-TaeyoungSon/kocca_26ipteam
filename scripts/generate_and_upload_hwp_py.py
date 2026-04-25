@@ -867,9 +867,9 @@ def upload_file_to_notion(token: str, file_bytes: bytes, filename: str) -> str:
     # Notion은 .hwpx/.hwp 확장자를 지원하지 않음 → .zip으로 업로드
     upload_name = filename
     if upload_name.lower().endswith('.hwpx'):
-        upload_name = upload_name[:-5] + '.zip'
+        upload_name = upload_name + '.zip'   # → filename.hwpx.zip (확장자만 지우면 바로 열림)
     elif upload_name.lower().endswith('.hwp'):
-        upload_name = upload_name[:-4] + '.zip'
+        upload_name = upload_name + '.zip'
 
     resp = requests.post(
         'https://api.notion.com/v1/file_uploads',
