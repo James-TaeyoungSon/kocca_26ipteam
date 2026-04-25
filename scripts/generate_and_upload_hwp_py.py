@@ -495,7 +495,7 @@ def _cell(col: int, row: int, fid: int, lines: List[Tuple[str, int, int]],
         f'</hp:subList>'
         f'<hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
         f'<hp:cellSpan colSpan="1" rowSpan="{rowspan}"/>'
-        f'<hp:cellSz width="{width}" height="{height * rowspan}"/>'
+        f'<hp:cellSz width="{width}" height="{height}"/>'
         f'<hp:cellMargin left="510" right="510" top="141" bottom="141"/>'
         f'</hp:tc>'
     )
