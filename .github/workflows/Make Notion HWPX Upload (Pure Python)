@@ -1,0 +1,25 @@
+name: Make Notion HWPX Upload (Pure Python)
+
+on:
+  repository_dispatch:
+    types: [make_notion_hwp_py, make_notion_weekly_report]
+
+jobs:
+  build-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run HWPX generator and upload to Notion
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python scripts/generate_and_upload_hwp_py.py
