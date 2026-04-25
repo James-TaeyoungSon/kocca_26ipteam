@@ -118,6 +118,24 @@ def _bf_solid(bf_id: int, color_hex: Optional[str] = None) -> str:
         '</hh:borderFill>'
     )
 
+def _bf_dash_h(bf_id: int, color_hex: Optional[str] = None) -> str:
+    """좌우 실선, 상하 점선 borderFill (캘린더 바디 셀용)."""
+    fill = ''
+    if color_hex:
+        fill = f'<hc:fillBrush><hc:winBrush faceColor="{color_hex}" hatchColor="#000000" alpha="0"/></hc:fillBrush>'
+    return (
+        f'<hh:borderFill id="{bf_id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">'
+        '<hh:slash type="NONE" Crooked="0" isCounter="0"/>'
+        '<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>'
+        '<hh:leftBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+        '<hh:rightBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+        '<hh:topBorder type="DASH" width="0.12 mm" color="#000000"/>'
+        '<hh:bottomBorder type="DASH" width="0.12 mm" color="#000000"/>'
+        '<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>'
+        f'{fill}'
+        '</hh:borderFill>'
+    )
+
 def _bf_none(bf_id: int, with_fill: bool = False) -> str:
     fill = '<hc:fillBrush><hc:winBrush faceColor="none" hatchColor="#999999" alpha="0"/></hc:fillBrush>' if with_fill else ''
     return (
@@ -228,7 +246,7 @@ def _make_header_xml() -> bytes:
     for i, (dark, _light) in enumerate(DAY_COLORS):
         bf_list.append(_bf_solid(4 + i, _rgb_hex(dark)))    # 4~8: 요일 짙은
     for i, (_dark, light) in enumerate(DAY_COLORS):
-        bf_list.append(_bf_solid(9 + i, _rgb_hex(light)))   # 9~13: 요일 연한
+        bf_list.append(_bf_dash_h(9 + i, _rgb_hex(light)))  # 9~13: 요일 연한 (가로 점선)
     bf_list.append(_bf_solid(14, '#D9D9D9'))   # 14: 회색
     bf_list.append(_bf_solid(15, '#FFFF00'))   # 15: 노랑
 
@@ -456,7 +474,7 @@ def _para(cp_id: int, text: str, pp_id: int = _PP_JUSTIFY,
     )
 
 def _cell(col: int, row: int, fid: int, lines: List[Tuple[str, int, int]],
-          width: int, height: int = 500) -> str:
+          width: int, height: int = 500, rowspan: int = 1) -> str:
     """
     표 셀 XML.
     lines: [(text, charPrId, paraPrId), ...]
@@ -476,17 +494,17 @@ def _cell(col: int, row: int, fid: int, lines: List[Tuple[str, int, int]],
         f'{paras}'
         f'</hp:subList>'
         f'<hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
-        f'<hp:cellSpan colSpan="1" rowSpan="1"/>'
-        f'<hp:cellSz width="{width}" height="{height}"/>'
+        f'<hp:cellSpan colSpan="1" rowSpan="{rowspan}"/>'
+        f'<hp:cellSz width="{width}" height="{height * rowspan}"/>'
         f'<hp:cellMargin left="510" right="510" top="141" bottom="141"/>'
         f'</hp:tc>'
     )
 
-def _table(rows_data: List[List[Tuple]], col_widths: List[int]) -> str:
+def _table(rows_data: List[List[Optional[Tuple]]], col_widths: List[int]) -> str:
     """
     rows_data: [ row, row, ... ]
-      row:      [ (fid, lines), (fid, lines), ... ]  per cell
-      lines:    [(text, charPrId, paraPrId), ...]
+      row:      [ cell, ... ]  per cell
+      cell:     (fid, lines) | (fid, lines, rowspan) | None(병합된 셀, 건너뜀)
     col_widths: HWP units per column
     """
     total_w = sum(col_widths)
@@ -496,9 +514,13 @@ def _table(rows_data: List[List[Tuple]], col_widths: List[int]) -> str:
     tr_parts = []
     for r_idx, row in enumerate(rows_data):
         tcs = ''
-        for c_idx, (fid, lines) in enumerate(row):
+        for c_idx, cell in enumerate(row):
+            if cell is None:
+                continue  # 병합된 상위 셀이 차지하는 영역
+            rowspan = cell[2] if len(cell) > 2 else 1
+            fid, lines = cell[0], cell[1]
             w = col_widths[c_idx] if c_idx < len(col_widths) else col_widths[-1]
-            tcs += _cell(c_idx, r_idx, fid, lines, w)
+            tcs += _cell(c_idx, r_idx, fid, lines, w, rowspan=rowspan)
         tr_parts.append(f'<hp:tr>{tcs}</hp:tr>')
 
     tbl_xml = (
@@ -553,22 +575,20 @@ def _make_section_xml(
     # 헤더 행
     hdr_row = []
     for i, (d, dk) in enumerate(zip(day_dates, ['월', '화', '수', '목', '금'])):
-        label = f'{dk}  {d.month}/{d.day}'
+        label = f'{dk}({d.month}/{d.day})'
         hdr_row.append((_FID_GRAY, [(label, _CP_DET_HD, _PP_CENTER)]))
     cal_rows.append(hdr_row)
 
-    # 이벤트 행
+    # 이벤트 행 (캘린더 글자색 모두 검정)
     for slot in range(max_slots):
         ev_row = []
         for i, d in enumerate(day_dates):
             events = day_events.get(d, [])
             lines: List[Tuple[str, int, int]] = []
             if slot < len(events):
-                gubun, content, time_str = events[slot]
-                if time_str:
-                    lines.append((time_str, _CP_TIME, _PP_JUSTIFY))
+                gubun, content = events[slot]
                 if gubun:
-                    lines.append((f'[{gubun}]', _CP_CAT_DAY[i], _PP_JUSTIFY))
+                    lines.append((f'[{gubun}]', _CP_GUBUN, _PP_JUSTIFY))   # 검정 볼드
                 if content:
                     lines.append((content, _CP_CONTENT, _PP_JUSTIFY))
             if not lines:
@@ -584,18 +604,46 @@ def _make_section_xml(
     # ── 상세 레이블 ───────────────────────────────────────────────────────
     parts.append(_para(_CP_LABEL, '■ 상세 업무 내역'))
 
-    # ── 상세 표 ───────────────────────────────────────────────────────────
-    # 열 너비 (mm → HWP 단위, 합계=75684)
-    mm_widths = {gi: 22, ii: 68, ci: 117, bi: 60}
-    n_cols = len(header)
-    mm_list = [mm_widths.get(c, 22) for c in range(n_cols)]
-    total_mm = sum(mm_list)
-    det_ws = [round(w / total_mm * _USABLE) for w in mm_list]
-    # 반올림 오차 보정
-    diff = _USABLE - sum(det_ws)
-    det_ws[-1] += diff
+    # ── 상세 표: 열 너비 동적 계산 ──────────────────────────────────────
+    def _tw(text: str) -> int:
+        """텍스트 너비 추정 (HWP 단위, 한글 ≈ 1050, ASCII ≈ 580)."""
+        return sum(1050 if ord(c) > 127 else 580 for c in text)
 
-    detail_rows: List[List[Tuple]] = []
+    def _col_nw(col_idx: int, hdr_name: str) -> int:
+        """열의 자연 너비 = 헤더·데이터 최장 줄 너비 + 셀 좌우 여백(1020)."""
+        lines = [hdr_name]
+        for row in data_rows:
+            val = row[col_idx] if col_idx < len(row) else ''
+            lines.extend(val.split('\n'))
+        return max(_tw(l) for l in lines) + 1020
+
+    n_cols = len(header)
+    nw = [_col_nw(c, header[c]) for c in range(n_cols)]
+    total_nw = sum(nw)
+    if total_nw <= _USABLE:
+        det_ws = list(nw)
+        det_ws[ci] += _USABLE - total_nw       # 여분은 내용 열에
+    else:
+        scale = _USABLE / total_nw
+        det_ws = [max(round(w * scale), 2000) for w in nw]
+        det_ws[ci] += _USABLE - sum(det_ws)    # 오차 보정
+
+    # ── 구분 병합 정보 계산 ─────────────────────────────────────────────
+    skip_gubun: set = set()   # 병합 대상이라 셀을 생략할 data_rows 인덱스
+    span_map: dict = {}       # {data_row_idx: rowspan 수}
+    r = 0
+    while r < len(data_rows):
+        val = data_rows[r][gi] if gi < len(data_rows[r]) else ''
+        s = r + 1
+        while s < len(data_rows) and (data_rows[s][gi] if gi < len(data_rows[s]) else '') == val:
+            s += 1
+        if s - r > 1:
+            span_map[r] = s - r
+            for k in range(r + 1, s):
+                skip_gubun.add(k)
+        r = s
+
+    detail_rows: List = []
     # 헤더 행
     hdr = []
     for c_idx, col_name in enumerate(header):
@@ -603,18 +651,25 @@ def _make_section_xml(
     detail_rows.append(hdr)
 
     # 데이터 행
-    for row in data_rows:
+    for r_idx, row in enumerate(data_rows):
         bigo_val = row[bi] if bi < len(row) else ''
         is_hbj = '본부장' in bigo_val
         dr = []
         for c_idx in range(n_cols):
+            if c_idx == gi and r_idx in skip_gubun:
+                dr.append(None)   # 병합된 상위 셀이 차지 → 건너뜀
+                continue
             val = row[c_idx] if c_idx < len(row) else ''
             bg = _FID_YELLOW if (is_hbj and 1 <= c_idx <= 3) else _FID_TABLE
             if c_idx == gi:
-                cp, pp = _CP_GUBUN, _PP_CENTER
+                rs = span_map.get(r_idx, 1)
+                dr.append((bg, [(val, _CP_GUBUN, _PP_CENTER)], rs))
+            elif c_idx == ii and '\n' in val:
+                date_line, time_line = val.split('\n', 1)
+                dr.append((bg, [(date_line, _CP_CONTENT, _PP_CENTER),
+                                 (time_line, _CP_TIME, _PP_CENTER)]))
             else:
-                cp, pp = _CP_CONTENT, _PP_JUSTIFY
-            dr.append((bg, [(val, cp, pp)]))
+                dr.append((bg, [(val, _CP_CONTENT, _PP_JUSTIFY)]))
         detail_rows.append(dr)
 
     parts.append(_table(detail_rows, det_ws))
@@ -748,21 +803,74 @@ def unescape_csv_text(text: str) -> str:
     )
 
 
-def _parse_start_date(iljeong: str):
-    m = re.match(r'(\d{4})\.(\d{2})\.(\d{2})', iljeong.strip())
-    return date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+def _parse_iljeong(iljeong: str) -> Optional[dict]:
+    """일정 문자열을 파싱하여 날짜/시간 정보를 반환."""
+    s = iljeong.strip() if iljeong else ''
 
-
-def _parse_time_range(iljeong: str) -> str:
+    # A: YYYY.MM.DD(요일) HH:MM ~ HH:MM  (당일 특정 시간)
     m = re.match(
-        r'\d{4}\.\d{2}\.\d{2}\([^)]+\)\s*(\d{2}):(\d{2})'
-        r'\s*~\s*\d{4}\.\d{2}\.\d{2}\([^)]+\)\s*(\d{2}):(\d{2})',
-        iljeong.strip(),
-    )
-    if not m:
-        return ''
-    sh, sm, eh, em = m.groups()
-    return '종일' if (sh, sm, eh, em) == ('00', '00', '00', '00') else f'{sh}:{sm}~{eh}:{em}'
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})\s*~\s*(\d{2}):(\d{2})\s*$', s)
+    if m:
+        y, mo, d, sh, sm_, eh, em = m.groups()
+        return {
+            'start_date': date(int(y), int(mo), int(d)),
+            'end_date': date(int(y), int(mo), int(d)),
+            'start_time': f'{sh}:{sm_}', 'end_time': f'{eh}:{em}',
+            'has_specific_time': True,
+        }
+
+    # B: YYYY.MM.DD(요일) HH:MM ~ YYYY.MM.DD(요일) HH:MM  (날짜 걸침)
+    m = re.match(
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})\s*~\s*'
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})\s*$', s)
+    if m:
+        sy, smo, sd, sh, sm_, ey, emo, ed, eh, em = m.groups()
+        is_allday = (sh == '00' and sm_ == '00' and eh == '00' and em == '00')
+        start = date(int(sy), int(smo), int(sd))
+        end = date(int(ey), int(emo), int(ed))
+        if is_allday:
+            end = end - timedelta(days=1)
+        return {
+            'start_date': start, 'end_date': end,
+            'start_time': None if is_allday else f'{sh}:{sm_}',
+            'end_time': None if is_allday else f'{eh}:{em}',
+            'has_specific_time': False,
+        }
+
+    # C: YYYY.MM.DD(요일) ~ YYYY.MM.DD(요일)  (기간형, 시간 없음)
+    m = re.match(
+        r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*~\s*(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*$', s)
+    if m:
+        sy, smo, sd, ey, emo, ed = m.groups()
+        return {
+            'start_date': date(int(sy), int(smo), int(sd)),
+            'end_date': date(int(ey), int(emo), int(ed)),
+            'start_time': None, 'end_time': None,
+            'has_specific_time': False,
+        }
+
+    # D: YYYY.MM.DD(요일)  (단일 날짜)
+    m = re.match(r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*$', s)
+    if m:
+        y, mo, d = m.groups()
+        return {
+            'start_date': date(int(y), int(mo), int(d)),
+            'end_date': date(int(y), int(mo), int(d)),
+            'start_time': None, 'end_time': None,
+            'has_specific_time': False,
+        }
+
+    return None
+
+
+def _format_detail_iljeong(iljeong: str) -> str:
+    """상세표 일정 칸 형식: '04.21(화)\n14:00~17:00'"""
+    parsed = _parse_iljeong(iljeong)
+    if not parsed or not parsed['has_specific_time']:
+        return iljeong
+    d = parsed['start_date']
+    dow = DAYS_KR[d.weekday()]
+    return f'{d.month:02d}.{d.day:02d}({dow})\n{parsed["start_time"]}~{parsed["end_time"]}'
 
 
 def _fix_allday(value: str) -> str:
@@ -817,10 +925,12 @@ def build_hwpx_bytes(csv_text: str, report_title: str = '') -> bytes:
         r[ii] if ii < len(r) else '',
     ))
 
-    all_dates = [_parse_start_date(r[ii]) for r in data_rows if ii < len(r)]
-    all_dates = [d for d in all_dates if d]
-    if all_dates:
-        mn = min(all_dates)
+    # ── 주간 날짜 범위 결정 ───────────────────────────────────────────────
+    all_parsed = [_parse_iljeong(r[ii] if ii < len(r) else '') for r in data_rows]
+    # 특정 시간 일정의 날짜로 주차 결정 (기간형 일정은 수개월 전 시작일이어서 제외)
+    specific_dates = [p['start_date'] for p in all_parsed if p and p['has_specific_time']]
+    if specific_dates:
+        mn = min(specific_dates)
         week_monday = mn - timedelta(days=mn.weekday())
     else:
         today = date.today()
@@ -829,25 +939,33 @@ def build_hwpx_bytes(csv_text: str, report_title: str = '') -> bytes:
     day_dates = [week_monday + timedelta(days=i) for i in range(5)]
     day_events: Dict[date, List] = {d: [] for d in day_dates}
 
-    for row in data_rows:
-        raw = row[ii] if ii < len(row) else ''
-        ev_date = _parse_start_date(raw)
-        if ev_date in day_events:
-            day_events[ev_date].append((
+    # ── 캘린더 이벤트 배치 ───────────────────────────────────────────────
+    # 특정 시간 일정 → 시작일 기준, 기간형 일정 → 종료일 기준(마감일 개념)
+    for row, parsed in zip(data_rows, all_parsed):
+        if not parsed:
+            continue
+        cal_date = parsed['start_date'] if parsed['has_specific_time'] else parsed['end_date']
+        if cal_date in day_events:
+            day_events[cal_date].append((
                 row[gi] if gi < len(row) else '',
                 row[ci] if ci < len(row) else '',
-                _parse_time_range(raw),
             ))
 
-    for row in data_rows:
-        if ii < len(row):
-            row[ii] = _fix_allday(row[ii])
+    # ── 상세표: 특정 시간 있는 일정만, 일정 표시 형식 변환 ──────────────
+    det_data_rows = []
+    for row, parsed in zip(data_rows, all_parsed):
+        if parsed and parsed['has_specific_time']:
+            r = list(row)
+            if ii < len(r):
+                r[ii] = _format_detail_iljeong(r[ii])
+            det_data_rows.append(r)
 
+    # _fix_allday는 캘린더/상세표 모두 처리 후 적용 필요 없음 (이미 파싱 완료)
     title = f'콘텐츠IP전략팀 {report_title}'.strip() if report_title else '콘텐츠IP전략팀'
 
     header_xml  = _make_header_xml()
     section_xml = _make_section_xml(
-        title, day_dates, day_events, header, data_rows, gi, ii, ci, bi,
+        title, day_dates, day_events, header, det_data_rows, gi, ii, ci, bi,
     )
     return _pack_hwpx(header_xml, section_xml, title)
 
