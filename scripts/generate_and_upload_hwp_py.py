@@ -605,33 +605,34 @@ def _make_section_xml(
     parts.append(_para(_CP_LABEL, '■ 상세 업무 내역'))
 
     # ── 상세 표: 열 너비 동적 계산 ──────────────────────────────────────
-    def _tw(text: str) -> int:
-        """텍스트 너비 추정 (HWP 단위, 한글 ≈ 1050, ASCII ≈ 580)."""
-        return sum(1050 if ord(c) > 127 else 580 for c in text)
+    def _tw(text: str, cjk_w: int = 1050, ascii_w: int = 580) -> int:
+        """텍스트 너비 추정 (HWP 단위)."""
+        return sum(cjk_w if ord(c) > 127 else ascii_w for c in text)
 
-    def _col_text_nw(col_idx: int, hdr_name: str) -> int:
+    def _col_text_nw(col_idx: int, hdr_name: str, cjk_w: int = 1050) -> int:
         """열의 자연 너비 = 헤더·데이터 최장 줄 너비 + 셀 좌우 여백(1020)."""
         lines = [hdr_name]
         for row in data_rows:
             val = row[col_idx] if col_idx < len(row) else ''
             lines.extend(val.split('\n'))
-        return max(_tw(l) for l in lines) + 1020
+        return max(_tw(l, cjk_w=cjk_w) for l in lines) + 1020
 
     n_cols = len(header)
-    # 구분·내용만 텍스트 기반 동적 계산, 일정·비고는 고정
     w_iljeong = 11 * 510 + 1020              # "HH:MM~HH:MM" 11자 × 9pt ≈ 25mm
-    w_bigo    = round(60 * _USABLE / 267)   # 60mm 고정
-    w_gubun   = _col_text_nw(gi, header[gi] if gi < len(header) else '구분')
-    w_content = _col_text_nw(ci, header[ci] if ci < len(header) else '내용')
+    # 구분: 11pt bold → CJK 1200 사용해 캐릭터(3자) 등이 줄바꿈되지 않도록
+    w_gubun   = _col_text_nw(gi, header[gi] if gi < len(header) else '구분', cjk_w=1200)
+    # 내용: 10pt → CJK 1050 (자연 너비만 사용, 남는 공간은 비고로)
+    w_content = _col_text_nw(ci, header[ci] if ci < len(header) else '내용', cjk_w=1050)
 
-    # 전체가 넘치면 내용 열을 먼저 축소
-    fixed = w_gubun + w_iljeong + w_bigo
-    if fixed + w_content > _USABLE:
-        w_content = max(_USABLE - fixed, 8000)
+    # 비고는 나머지 공간 (최소 30mm)
+    MIN_BIGO = round(30 * _USABLE / 267)
+    if w_gubun + w_iljeong + w_content + MIN_BIGO > _USABLE:
+        w_content = max(_USABLE - w_gubun - w_iljeong - MIN_BIGO, 8000)
+    w_bigo = _USABLE - w_gubun - w_iljeong - w_content
 
     det_ws_map = {gi: w_gubun, ii: w_iljeong, ci: w_content, bi: w_bigo}
     det_ws = [det_ws_map.get(c, round(_USABLE / n_cols)) for c in range(n_cols)]
-    det_ws[ci] += _USABLE - sum(det_ws)    # 오차 보정(내용 열에)
+    # sum(det_ws) == _USABLE by construction → 보정 불필요
 
     # ── 구분 병합 정보 계산 ─────────────────────────────────────────────
     skip_gubun: set = set()   # 병합 대상이라 셀을 생략할 data_rows 인덱스
