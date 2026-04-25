@@ -609,7 +609,7 @@ def _make_section_xml(
         """텍스트 너비 추정 (HWP 단위, 한글 ≈ 1050, ASCII ≈ 580)."""
         return sum(1050 if ord(c) > 127 else 580 for c in text)
 
-    def _col_nw(col_idx: int, hdr_name: str) -> int:
+    def _col_text_nw(col_idx: int, hdr_name: str) -> int:
         """열의 자연 너비 = 헤더·데이터 최장 줄 너비 + 셀 좌우 여백(1020)."""
         lines = [hdr_name]
         for row in data_rows:
@@ -618,15 +618,20 @@ def _make_section_xml(
         return max(_tw(l) for l in lines) + 1020
 
     n_cols = len(header)
-    nw = [_col_nw(c, header[c]) for c in range(n_cols)]
-    total_nw = sum(nw)
-    if total_nw <= _USABLE:
-        det_ws = list(nw)
-        det_ws[ci] += _USABLE - total_nw       # 여분은 내용 열에
-    else:
-        scale = _USABLE / total_nw
-        det_ws = [max(round(w * scale), 2000) for w in nw]
-        det_ws[ci] += _USABLE - sum(det_ws)    # 오차 보정
+    # 구분·내용만 텍스트 기반 동적 계산, 일정·비고는 고정
+    w_iljeong = 11 * 510 + 1020              # "HH:MM~HH:MM" 11자 × 9pt ≈ 25mm
+    w_bigo    = round(60 * _USABLE / 267)   # 60mm 고정
+    w_gubun   = _col_text_nw(gi, header[gi] if gi < len(header) else '구분')
+    w_content = _col_text_nw(ci, header[ci] if ci < len(header) else '내용')
+
+    # 전체가 넘치면 내용 열을 먼저 축소
+    fixed = w_gubun + w_iljeong + w_bigo
+    if fixed + w_content > _USABLE:
+        w_content = max(_USABLE - fixed, 8000)
+
+    det_ws_map = {gi: w_gubun, ii: w_iljeong, ci: w_content, bi: w_bigo}
+    det_ws = [det_ws_map.get(c, round(_USABLE / n_cols)) for c in range(n_cols)]
+    det_ws[ci] += _USABLE - sum(det_ws)    # 오차 보정(내용 열에)
 
     # ── 구분 병합 정보 계산 ─────────────────────────────────────────────
     skip_gubun: set = set()   # 병합 대상이라 셀을 생략할 data_rows 인덱스
@@ -819,7 +824,7 @@ def _parse_iljeong(iljeong: str) -> Optional[dict]:
             'has_specific_time': True,
         }
 
-    # B: YYYY.MM.DD(요일) HH:MM ~ YYYY.MM.DD(요일) HH:MM  (날짜 걸침)
+    # B: YYYY.MM.DD(요일) HH:MM ~ YYYY.MM.DD(요일) HH:MM  (날짜 포함 범위)
     m = re.match(
         r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})\s*~\s*'
         r'(\d{4})\.(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})\s*$', s)
@@ -830,10 +835,21 @@ def _parse_iljeong(iljeong: str) -> Optional[dict]:
         end = date(int(ey), int(emo), int(ed))
         if is_allday:
             end = end - timedelta(days=1)
+            return {
+                'start_date': start, 'end_date': end,
+                'start_time': None, 'end_time': None,
+                'has_specific_time': False,
+            }
+        # 같은 날 이벤트(양쪽에 날짜 명시) → 특정 시간 일정으로 처리
+        if start == end:
+            return {
+                'start_date': start, 'end_date': end,
+                'start_time': f'{sh}:{sm_}', 'end_time': f'{eh}:{em}',
+                'has_specific_time': True,
+            }
         return {
             'start_date': start, 'end_date': end,
-            'start_time': None if is_allday else f'{sh}:{sm_}',
-            'end_time': None if is_allday else f'{eh}:{em}',
+            'start_time': f'{sh}:{sm_}', 'end_time': f'{eh}:{em}',
             'has_specific_time': False,
         }
 
@@ -960,8 +976,21 @@ def build_hwpx_bytes(csv_text: str, report_title: str = '') -> bytes:
                 r[ii] = _format_detail_iljeong(r[ii])
             det_data_rows.append(r)
 
-    # _fix_allday는 캘린더/상세표 모두 처리 후 적용 필요 없음 (이미 파싱 완료)
-    title = f'콘텐츠IP전략팀 {report_title}'.strip() if report_title else '콘텐츠IP전략팀'
+    # ── 제목 조합 ────────────────────────────────────────────────────────
+    # "MM월 DD일 ~ MM월 DD일 주간업무 보고" →
+    # "콘텐츠IP전략팀 주간업무 보고(YYYY년 MM월 DD일 ~ MM월 DD일)"
+    def _make_title(rpt: str) -> str:
+        if rpt and '주간업무 보고' in rpt:
+            pairs = re.findall(r'(\d{1,2})월\s*(\d{1,2})일', rpt)
+            if len(pairs) >= 2:
+                yr = date.today().year
+                s_mo, s_day = int(pairs[0][0]), int(pairs[0][1])
+                e_mo, e_day = int(pairs[1][0]), int(pairs[1][1])
+                return (f'콘텐츠IP전략팀 주간업무 보고'
+                        f'({yr}년 {s_mo:02d}월 {s_day:02d}일 ~ {e_mo:02d}월 {e_day:02d}일)')
+        return f'콘텐츠IP전략팀 {rpt}'.strip() if rpt else '콘텐츠IP전략팀'
+
+    title = _make_title(report_title)
 
     header_xml  = _make_header_xml()
     section_xml = _make_section_xml(
@@ -1104,19 +1133,7 @@ def main() -> int:
     elif not filename.lower().endswith('.hwpx'):
         filename += '.hwpx'
 
-    # "04월 20일 ~ 04월 26일 주간업무 보고" → "2026년 17주차" 형태로 변환
-    if rpt_title and '주간업무 보고' in rpt_title:
-        m = re.search(r'(\d{1,2})월\s*(\d{1,2})일', rpt_title)
-        if m:
-            from datetime import date as _date
-            month, day = int(m.group(1)), int(m.group(2))
-            year = _date.today().year
-            try:
-                d = _date(year, month, day)
-                week_num = d.isocalendar()[1]
-                rpt_title = f'{year}년 {week_num}주차'
-            except Exception:
-                pass
+    # report_title 그대로 전달 (제목 형식은 build_hwpx_bytes 내부에서 처리)
 
     hwpx_bytes               = build_hwpx_bytes(csv_text, report_title=rpt_title)
     file_upload_id, uploaded = upload_file_to_notion(notion_token, hwpx_bytes, filename)
