@@ -933,7 +933,7 @@ def main() -> int:
     csv_b64    = payload.get('csv_b64', '')
     page_id    = payload.get('notion_page_id', '')
     filename   = payload.get('report_name', 'weekly_report.hwpx')
-    prop_name  = payload.get('file_property_name', '파일과 미디어')
+    prop_name  = payload.get('file_property_name', 'HWP 파일')
     delimiter  = payload.get('delimiter', ',')
     rpt_title  = payload.get('report_title', '')
 
