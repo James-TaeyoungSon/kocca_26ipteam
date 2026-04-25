@@ -864,10 +864,17 @@ def _notion_headers(token: str, json_ct: bool = False) -> Dict[str, str]:
 
 
 def upload_file_to_notion(token: str, file_bytes: bytes, filename: str) -> str:
+    # Notion은 .hwpx/.hwp 확장자를 지원하지 않음 → .zip으로 업로드
+    upload_name = filename
+    if upload_name.lower().endswith('.hwpx'):
+        upload_name = upload_name[:-5] + '.zip'
+    elif upload_name.lower().endswith('.hwp'):
+        upload_name = upload_name[:-4] + '.zip'
+
     resp = requests.post(
         'https://api.notion.com/v1/file_uploads',
         headers=_notion_headers(token, json_ct=True),
-        json={'content_type': 'application/hwp+zip', 'filename': filename},
+        json={'content_type': 'application/zip', 'filename': upload_name},
         timeout=30,
     )
     resp.raise_for_status()
@@ -876,11 +883,11 @@ def upload_file_to_notion(token: str, file_bytes: bytes, filename: str) -> str:
     send = requests.post(
         obj['upload_url'],
         headers=_notion_headers(token),
-        files={'file': (filename, file_bytes, 'application/hwp+zip')},
+        files={'file': (upload_name, file_bytes, 'application/zip')},
         timeout=60,
     )
     send.raise_for_status()
-    return obj['id']
+    return obj['id'], upload_name
 
 
 def attach_file_to_page(token: str, page_id: str, file_upload_id: str,
@@ -969,13 +976,13 @@ def main() -> int:
             except Exception:
                 pass
 
-    hwpx_bytes     = build_hwpx_bytes(csv_text, report_title=rpt_title)
-    file_upload_id = upload_file_to_notion(notion_token, hwpx_bytes, filename)
-    attach_file_to_page(notion_token, page_id, file_upload_id, filename, prop_name)
+    hwpx_bytes               = build_hwpx_bytes(csv_text, report_title=rpt_title)
+    file_upload_id, uploaded = upload_file_to_notion(notion_token, hwpx_bytes, filename)
+    attach_file_to_page(notion_token, page_id, file_upload_id, uploaded, prop_name)
 
     print('OK')
     print(json.dumps(
-        {'page_id': page_id, 'filename': filename, 'file_upload_id': file_upload_id},
+        {'page_id': page_id, 'filename': uploaded, 'file_upload_id': file_upload_id},
         ensure_ascii=False,
     ))
     return 0
